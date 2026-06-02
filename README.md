@@ -31,6 +31,7 @@ Encrypt your password using the Informatica utility:
 chmod 700 /opt/informatica/scripts/siem
 # Export Directory
 chmod 770 /opt/informatica/siem_export
+```
 
 ### 4. Deployment
 1. Place `infa_siem_export.sh` into `/opt/informatica/scripts/siem/`.
@@ -43,3 +44,9 @@ chmod 770 /opt/informatica/siem_export
 1. **Fetch:** Collect files via `*.json` mask from `/opt/informatica/siem_export/`.
 2. **Cleanup:** Delete successfully processed `*.json` files.
 3. **Format:** Single-line JSON (NDJSON).
+
+**Sample Payload (JSON):**
+```json
+{"Vendor": "Informatica", "Source": "DOMAIN", "EventTime": "2026-06-02 15:30:00", "Severity": "INFO", "Category": "Security", "EventCode": "UM_10059", "Message": "User [Administrator] logged in successfully from host [192.168.1.50]."}
+{"Vendor": "Informatica", "Source": "IS_PROD_01", "EventTime": "2026-06-02 15:32:14", "Severity": "INFO", "Category": "LM", "EventCode": "LM_36488", "Message": "Session task instance [s_m_DWH_LOAD] : [Execution terminated successfully.]"}
+```
