@@ -4,7 +4,6 @@
 # License: MIT
 # Date: 2026-06-02
 # ==============================================================================
-# ==============================================================================
 # Script for exporting Informatica security and operational logs for SIEM
 # ==============================================================================
 
@@ -13,8 +12,8 @@ INFA_HOME="/opt/informatica/10.5.5"
 DOMAIN_NAME="Domain_PROD"
 INFA_USER="siem_reader"
 
-# Экспортируем переменную для авторизации
-export ADMINPASS="YOUR_PASSWORD_HERE"
+# Системная переменная для авторизации (ожидается шифрованный пароль)
+export INFA_DEFAULT_DOMAIN_PASSWORD="INSERT_ENCRYPTED_STRING_HERE"
 
 APP_DIR="/opt/informatica/scripts/siem"
 STATE_FILE="${APP_DIR}/hwm_state.txt"
@@ -30,9 +29,9 @@ TMP_RAW_LOG="${APP_DIR}/raw_export_${FILE_TS}.txt"
 TMP_DOMAIN="${EXPORT_DIR}/domain_${FILE_TS}.tmp"
 TMP_SERVICES="${EXPORT_DIR}/services_${FILE_TS}.tmp"
 
-# Функция-обертка для вызова infacmd с паролем из переменной
+# Обертка для вызова infacmd
 run_infa() {
-    $INFA_HOME/isp/bin/infacmd.sh "$@" -pd "$ADMINPASS"
+    $INFA_HOME/isp/bin/infacmd.sh "$@"
 }
 
 # --- 2. HWM (High-Water Mark) LOGIC ---
@@ -71,20 +70,29 @@ parse_to_json() {
 
 # --- 5. DOMAIN EXPORT ---
 run_infa GetLog -dn $DOMAIN_NAME -un $INFA_USER -st DOMAIN -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
-
 parse_to_json "DOMAIN" "$TMP_DOMAIN"
 rm -f "$TMP_RAW_LOG"
 
 # --- 6. SERVICES EXPORT ---
-SERVICES=$(run_infa isp ListServices -dn $DOMAIN_NAME -un $INFA_USER | grep -v -i "successfully")
+SERVICES_LIST=$(run_infa isp ListServices -dn $DOMAIN_NAME -un $INFA_USER | grep -v -i "successfully")
 
-for SERVICE in $SERVICES; do
-    run_infa GetLog -dn $DOMAIN_NAME -un $INFA_USER -st SERVICE -sn "$SERVICE" -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
+while read -r name type; do
+    [[ -z "$name" || "$name" == "Name" ]] && continue
     
-    parse_to_json "$SERVICE" "$TMP_SERVICES"
+    # Определяем тип сервиса для infacmd
+    case "$type" in
+        "IntegrationService") SERVICE_TYPE="IS" ;;
+        "RepositoryService") SERVICE_TYPE="RS" ;;
+        "WebService") SERVICE_TYPE="WS" ;;
+        *) SERVICE_TYPE="SERVICE" ;;
+    esac
+
+    run_infa GetLog -dn $DOMAIN_NAME -un $INFA_USER -st "$SERVICE_TYPE" -sn "$name" -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
+    
+    parse_to_json "$name" "$TMP_SERVICES"
     rm -f "$TMP_RAW_LOG"
     sleep 1
-done
+done <<< "$SERVICES_LIST"
 
 # --- 7. ATOMIC COMMIT FOR SIEM ---
 if [ -s "$TMP_DOMAIN" ]; then mv "$TMP_DOMAIN" "${EXPORT_DIR}/domain_${FILE_TS}.json"; else rm -f "$TMP_DOMAIN"; fi
