@@ -12,7 +12,6 @@ INFA_HOME="/opt/informatica/10.5.5"
 DOMAIN_NAME="Domain_PROD"
 INFA_USER="siem_reader"
 
-# Системная переменная для авторизации (ожидается шифрованный пароль)
 export INFA_DEFAULT_DOMAIN_PASSWORD="INSERT_ENCRYPTED_STRING_HERE"
 
 APP_DIR="/opt/informatica/scripts/siem"
@@ -29,7 +28,6 @@ TMP_RAW_LOG="${APP_DIR}/raw_export_${FILE_TS}.txt"
 TMP_DOMAIN="${EXPORT_DIR}/domain_${FILE_TS}.tmp"
 TMP_SERVICES="${EXPORT_DIR}/services_${FILE_TS}.tmp"
 
-# Обертка для вызова infacmd
 run_infa() {
     $INFA_HOME/isp/bin/infacmd.sh "$@"
 }
@@ -43,12 +41,12 @@ fi
 
 echo "[$NOW] Starting export cycle. Period: $START_TIME to $NOW" >> "$SCRIPT_LOG"
 
-# --- 3. QUOTA CHECK AND FAIL-SAFE ---
+# --- 3. QUOTA CHECK ---
 DIR_SIZE=$(du -mc ${EXPORT_DIR}/*.json 2>/dev/null | grep total$ | awk '{print $1}')
 DIR_SIZE=${DIR_SIZE:-0}
 
 if [ "$DIR_SIZE" -ge "$MAX_DIR_SIZE_MB" ]; then
-    echo "[$NOW] CRITICAL: Export folder is full (${DIR_SIZE}MB). SIEM is not collecting logs. Halting." >> "$SCRIPT_LOG"
+    echo "[$NOW] CRITICAL: Export folder full. Halting." >> "$SCRIPT_LOG"
     exit 1 
 fi
 
@@ -74,31 +72,33 @@ parse_to_json "DOMAIN" "$TMP_DOMAIN"
 rm -f "$TMP_RAW_LOG"
 
 # --- 6. SERVICES EXPORT ---
-SERVICES_LIST=$(run_infa isp ListServices -dn $DOMAIN_NAME -un $INFA_USER | grep -v -i "successfully")
+# Получаем только список имен сервисов
+SERVICES_LIST=$(run_infa isp ListServices -dn $DOMAIN_NAME -un $INFA_USER | grep -v -i "successfully" | awk '{print $1}')
 
-while read -r name type; do
-    [[ -z "$name" || "$name" == "Name" ]] && continue
-    
-    # Определяем тип сервиса для infacmd
-    case "$type" in
-        "IntegrationService") SERVICE_TYPE="IS" ;;
-        "RepositoryService") SERVICE_TYPE="RS" ;;
-        "WebService") SERVICE_TYPE="WS" ;;
-        *) SERVICE_TYPE="SERVICE" ;;
-    esac
+for name in $SERVICES_LIST; do
+    # Фильтрация по префиксу
+    if [[ "$name" == IS_* ]]; then
+        TYPE="IS"
+    elif [[ "$name" == RS_* ]]; then
+        TYPE="RS"
+    elif [[ "$name" == WS_* ]]; then
+        TYPE="WS"
+    else
+        continue
+    fi
 
-    run_infa GetLog -dn $DOMAIN_NAME -un $INFA_USER -st "$SERVICE_TYPE" -sn "$name" -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
+    # Выгрузка лога
+    run_infa GetLog -dn $DOMAIN_NAME -un $INFA_USER -st "$TYPE" -sn "$name" -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
     
     parse_to_json "$name" "$TMP_SERVICES"
     rm -f "$TMP_RAW_LOG"
     sleep 1
-done <<< "$SERVICES_LIST"
+done
 
-# --- 7. ATOMIC COMMIT FOR SIEM ---
+# --- 7. ATOMIC COMMIT ---
 if [ -s "$TMP_DOMAIN" ]; then mv "$TMP_DOMAIN" "${EXPORT_DIR}/domain_${FILE_TS}.json"; else rm -f "$TMP_DOMAIN"; fi
 if [ -s "$TMP_SERVICES" ]; then mv "$TMP_SERVICES" "${EXPORT_DIR}/services_${FILE_TS}.json"; else rm -f "$TMP_SERVICES"; fi
 
-# --- 8. COMPLETION ---
 echo "$NOW" > "$STATE_FILE"
 echo "[$NOW] Export cycle completed successfully." >> "$SCRIPT_LOG"
 
