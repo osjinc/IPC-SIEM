@@ -12,7 +12,9 @@
 INFA_HOME="/opt/informatica/10.5.5"
 DOMAIN_NAME="Domain_PROD"
 INFA_USER="siem_reader"
-INFA_PASS_ENC="INSERT_ENCRYPTED_STRING_HERE" 
+
+# Экспортируем переменную для авторизации
+export ADMINPASS="YOUR_PASSWORD_HERE"
 
 APP_DIR="/opt/informatica/scripts/siem"
 STATE_FILE="${APP_DIR}/hwm_state.txt"
@@ -27,6 +29,11 @@ FILE_TS=$(date +"%Y%m%d_%H%M%S")
 TMP_RAW_LOG="${APP_DIR}/raw_export_${FILE_TS}.txt"
 TMP_DOMAIN="${EXPORT_DIR}/domain_${FILE_TS}.tmp"
 TMP_SERVICES="${EXPORT_DIR}/services_${FILE_TS}.tmp"
+
+# Функция-обертка для вызова infacmd с паролем из переменной
+run_infa() {
+    $INFA_HOME/isp/bin/infacmd.sh "$@" -pd "$ADMINPASS"
+}
 
 # --- 2. HWM (High-Water Mark) LOGIC ---
 if [ -f "$STATE_FILE" ]; then
@@ -63,16 +70,16 @@ parse_to_json() {
 }
 
 # --- 5. DOMAIN EXPORT ---
-$INFA_HOME/isp/bin/infacmd.sh GetLog -dn $DOMAIN_NAME -un $INFA_USER -pd $INFA_PASS_ENC -ep -st DOMAIN -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
+run_infa GetLog -dn $DOMAIN_NAME -un $INFA_USER -st DOMAIN -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
 
 parse_to_json "DOMAIN" "$TMP_DOMAIN"
 rm -f "$TMP_RAW_LOG"
 
 # --- 6. SERVICES EXPORT ---
-SERVICES=$($INFA_HOME/isp/bin/infacmd.sh isp ListServices -dn $DOMAIN_NAME -un $INFA_USER -pd $INFA_PASS_ENC -ep | grep -v -i "successfully")
+SERVICES=$(run_infa isp ListServices -dn $DOMAIN_NAME -un $INFA_USER | grep -v -i "successfully")
 
 for SERVICE in $SERVICES; do
-    $INFA_HOME/isp/bin/infacmd.sh GetLog -dn $DOMAIN_NAME -un $INFA_USER -pd $INFA_PASS_ENC -ep -st SERVICE -sn "$SERVICE" -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
+    run_infa GetLog -dn $DOMAIN_NAME -un $INFA_USER -st SERVICE -sn "$SERVICE" -fm TEXT -sd "$START_TIME" -ed "$NOW" -lo "$TMP_RAW_LOG" > /dev/null 2>&1
     
     parse_to_json "$SERVICE" "$TMP_SERVICES"
     rm -f "$TMP_RAW_LOG"
