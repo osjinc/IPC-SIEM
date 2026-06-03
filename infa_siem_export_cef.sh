@@ -4,7 +4,7 @@
 # License: MIT
 # Date: 2026-06-03
 # ==============================================================================
-# Script for exporting Informatica security and operational logs for SIEM (CEF Format)
+# Script for exporting Informatica security and operational logs for SIEM (CEF+Syslog Format)
 # ==============================================================================
 
 # --- 1. ENVIRONMENT VARIABLES AND PATHS ---
@@ -12,7 +12,6 @@ INFA_HOME="/opt/informatica/10.5.5"
 DOMAIN_NAME="Domain_PROD"
 INFA_USER="siem_reader"
 
-# Системная переменная для авторизации (замените на свой шифрованный пароль)
 export INFA_DEFAULT_DOMAIN_PASSWORD="INSERT_ENCRYPTED_STRING_HERE"
 
 APP_DIR="/opt/informatica/scripts/siem"
@@ -50,20 +49,39 @@ run_infa() {
     $INFA_HOME/isp/bin/infacmd.sh "$@"
 }
 
-# --- 4. CEF PARSER FUNCTION ---
+# --- 4. CEF PARSER FUNCTION (RFC 3164/5424 + CEF Strict) ---
 parse_to_cef() {
     local source_name=$1
     local output_tmp_file=$2
     local whitelist="Security|User Management|Authentication|LM_36318|LM_36488|UM_10058|UM_10059"
     
+    # Генерация заголовка Syslog (формат Jan 18 11:07:53 и сетевое имя)
+    local syslog_ts=$(LC_TIME=en_US.UTF-8 date +"%b %e %H:%M:%S")
+    local sys_host=$(hostname)
+    
     if [ -f "$TMP_RAW_LOG" ]; then
         grep -E "$whitelist" "$TMP_RAW_LOG" | \
-        awk -v src="$source_name" -F ' : ' '{
-            # Очистка от лишних кавычек и переносов строк для безопасного CEF
-            gsub(/"/, "\\\"", $0);
-            gsub(/\n/, " ", $0);
-            # Формирование строки CEF:0|Vendor|Product|Version|EventCode|Name|Severity|Extension
-            printf "CEF:0|Informatica|PowerCenter|10.5.5|%s|Event|%s|src=%s msg=%s\n", $6, $2, src, $7
+        awk -v src="$source_name" -v sys_ts="$syslog_ts" -v shost="$sys_host" -F ' : ' '{
+            # 1. Маппинг критичности (Severity) в цифровой формат CEF (0-10)
+            sev = 3; # Дефолт для INFO/TRACE/DEBUG
+            if ($2 == "WARNING") sev = 6;
+            else if ($2 == "ERROR") sev = 8;
+            else if ($2 == "FATAL") sev = 10;
+            
+            # 2. Конвертация времени события из формата INFA (YYYY-MM-DD HH:MM:SS) в Epoch (UNIX) для поля rt
+            split($1, dt_parts, /[- :]/);
+            # dt_parts: 1=YYYY, 2=MM, 3=DD, 4=HH, 5=MM, 6=SS
+            epoch_time = mktime(dt_parts[1] " " dt_parts[2] " " dt_parts[3] " " dt_parts[4] " " dt_parts[5] " " dt_parts[6]);
+            
+            # 3. Очистка сообщения (экранирование спецсимволов для корректного парсинга SIEM)
+            msg = $7;
+            gsub(/\\/, "\\\\", msg);
+            gsub(/\|/, "\\|", msg);
+            gsub(/\n/, " ", msg);
+            
+            # 4. Формирование итоговой строки: Syslog Header + CEF String
+            # Формат: <DateTime> <Host> CEF:0|<Vendor>|<Product>|<Version>|<ClassID>|<Name>|<Severity>|rt=<Epoch> shost=<Host> cs1=<Message>
+            printf "%s %s CEF:0|Informatica|PowerCenter|10.5.5|%s|%s: %s|%s|rt=%s shost=%s cs1=%s\n", sys_ts, shost, $6, $3, src, sev, epoch_time, shost, msg
         }' >> "$output_tmp_file"
     fi
 }
