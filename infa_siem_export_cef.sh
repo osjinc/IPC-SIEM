@@ -53,7 +53,7 @@ run_infa() {
 parse_to_cef() {
     local source_name=$1
     local output_tmp_file=$2
-    local whitelist="Security|User Management|Authentication|LM_36318|LM_36488|UM_10058|UM_10059"
+    local whitelist="Security|User Management|Authentication|Authorization|LM_36318|LM_36488|UM_10034|UM_10058|UM_10059|CCM_10778|CCM_10779|CCM_10786|CCM_10787"
     
     # Генерация заголовка Syslog (формат Jan 18 11:07:53 и сетевое имя)
     local syslog_ts=$(LC_TIME=en_US.UTF-8 date +"%b %e %H:%M:%S")
